@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plr-lr"
+version = "0.1.0"
+description = "Bring a robotic arm under PyLabRobot control, then give it eyes and hands: simulation-first arm onboarding, eye-in-hand computer vision, and dexterous manipulation."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "di-omics" }]
+keywords = [
+  "lab-automation",
+  "pylabrobot",
+  "robotic-arm",
+  "computer-vision",
+  "hand-eye-calibration",
+  "manipulation",
+  "robotics",
+]
+dependencies = [
+  "pylabrobot>=0.2",
+  "numpy>=1.23",
+]
+
+[project.optional-dependencies]
+# Real SOTA detectors (RF-DETR / SAM2) plug into the Detector seam. Left optional
+# so the simulation path stays CPU-only and dependency-light.
+vision = [
+  "opencv-python-headless>=4.8",
+]
+dev = [
+  "pytest>=7",
+  "ruff>=0.5",
+]
+
+[tool.setuptools.packages.find]
+include = ["plr_lr*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
