@@ -7,7 +7,7 @@ Three phases, built simulation-first:
   3. manipulation dexterous skills beyond plate handling (uncap threaded vessels)
 """
 
-from . import qc
+from . import qc, vision
 from .arm import (
   ArmNotHomedError,
   GripperError,
@@ -33,6 +33,7 @@ __all__ = [
   "Site",
   "Labware",
   "Pose2D",
+  "vision",
   "qc",
   "__version__",
 ]
