@@ -1,6 +1,9 @@
-# plr-lr
+# plr-lab-robot
 
 PyLabRobot LabRobot: bring a robotic arm under PyLabRobot control, then give it eyes and hands.
+
+> The Python package is `plr_lr` (short, for imports). The repository is named
+> `plr-lab-robot` so its purpose is obvious at a glance; they are the same project.
 
 PyLabRobot ships an arm front end (`ExperimentalSCARA`) and a hardware driver
 (PreciseFlex), but no simulation backend, so the arm API cannot be exercised
