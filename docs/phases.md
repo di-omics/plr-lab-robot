@@ -52,12 +52,39 @@ Goal: actions past plate handling, starting with threaded caps.
 `SkillResult`. `decap.py` implements `DecapSkill` (grip the cap, rotate
 counter-clockwise while lifting by the thread pitch per turn, park the cap, verify
 the vessel is open) and `RecapSkill` (the inverse). The motion stays within the
-`ExperimentalSCARA` API, so the same skill maps onto a real end-effector with a
-rotating wrist.
+`ExperimentalSCARA` API to preserve a future hardware-adapter seam; this repository
+does not validate the motion on a physical end-effector.
+
+## Phase 4: domain-authored workcell execution
+
+Goal: make expert intent executable without allowing an AI planner or transient
+controller failure to bypass observable safety gates.
+
+`tasking.py` adds four pieces:
+
+- `TaskContract` and `MoveLabwareParameters` are a typed boundary around action,
+  intent, protocol version, sample identifiers, and recovery budget;
+- `StateCondition` checks named sites, labware held/capped state, cap parking, and
+  arm readiness/homing/holding state before or after motion;
+- `TaskExecutor` contains errors with `halt()`, retries only classified transient
+  errors, and retries only if the original preconditions and empty gripper are
+  observed again. Attempts are hard-limited to three;
+- `TaskOutcome` captures before/after snapshots, condition results, the command
+  trace slice, protocol/sample provenance, and a hash-linked event trail. Its
+  JSON artifact can detect accidental mutation of recorded events or trace data.
+
+`summarize_benchmark()` aggregates success, visible pre/postcondition pass rates,
+recovered runs, and audit-integrity checks over deterministic simulation cases.
+Fault-injection tests cover a pre-motion transient that recovers, an unexpected
+adapter error that does not retry, a no-op that fails postconditions, and a
+disconnect after pick that is refused a retry because the arm is still holding.
 
 ## What is validated, and what is not
 
 The simulation is kinematic and geometric. It validates control flow, coordinate
-math, calibration recovery, and state bookkeeping. It does not model dynamics,
-contact forces, torque, or slip; those belong to hardware bring-up and are gated
-by the readiness checks in `qc.py`.
+math, calibration recovery, state bookkeeping, task gating, and bounded recovery
+decisions. It does not model dynamics, collision avoidance, contact forces,
+torque, slip, sample identity, sensor behavior, robot safety functions, or
+hardware interlocks. The audit hash chain is an integrity check, not signed proof
+or physical-world evidence. Those gaps belong to qualified hardware bring-up and
+must not be inferred from the passing simulation suite.

@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np
-
 from pylabrobot.arms import ExperimentalSCARA
 from pylabrobot.arms.backend import AccessPattern
 from pylabrobot.arms.precise_flex.coords import PreciseFlexCartesianCoords

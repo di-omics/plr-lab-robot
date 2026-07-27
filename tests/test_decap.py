@@ -1,6 +1,6 @@
 import unittest
 
-from plr_lr import Labware, Pose2D, Workcell, site_coords
+from plr_lr import Labware, Workcell
 from plr_lr.manipulation import DecapSkill, RecapSkill
 
 

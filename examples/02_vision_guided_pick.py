@@ -11,7 +11,7 @@ import asyncio
 
 import numpy as np
 
-from plr_lr import Labware, Pose2D, Workcell, site_coords
+from plr_lr import Labware, Workcell
 from plr_lr.vision import (
   CameraIntrinsics,
   SimDetector,
@@ -61,7 +61,7 @@ async def main() -> None:
   nominal = estimate_offset(det, intr, base_from_cam, wc.coords_for("stage"), plane_z)
   print(f"detected offset from taught: dx={nominal.dx:+.2f} mm dy={nominal.dy:+.2f} mm")
 
-  corr = await vision_guided_pick(
+  await vision_guided_pick(
     wc.arm, det, intr, base_from_cam, wc.coords_for("stage"),
     plane_z=plane_z, plate_width=plate.plate_width,
   )

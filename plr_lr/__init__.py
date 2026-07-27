@@ -1,13 +1,14 @@
 """plr-lr: bring a robotic arm under PyLabRobot control, then give it eyes and hands.
 
-Three phases, built simulation-first:
+Four phases, built simulation-first:
 
   1. arm         stand up the arm (a simulation backend for ``ExperimentalSCARA``)
   2. vision      eye-in-hand calibration, detection, closed-loop guided pick
   3. manipulation dexterous skills beyond plate handling (uncap threaded vessels)
+  4. tasking     typed workcell contracts, state gates, bounded recovery, audit outcomes
 """
 
-from . import manipulation, qc, vision
+from . import manipulation, qc, tasking, vision
 from .arm import (
   ArmNotHomedError,
   GripperError,
@@ -19,7 +20,7 @@ from .arm import (
 )
 from .world import Labware, Pose2D, Site, World
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
   "SimulationArmBackend",
@@ -36,5 +37,6 @@ __all__ = [
   "vision",
   "manipulation",
   "qc",
+  "tasking",
   "__version__",
 ]
