@@ -10,6 +10,7 @@ does not bound a computed pose.
 from __future__ import annotations
 
 import math
+import random
 import unittest
 
 import numpy as np
@@ -644,3 +645,82 @@ class RefusalTaxonomyTests(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
+
+
+class CanonicalFormRespectsDeclaredLimits(unittest.TestCase):
+  """A joint range is not required to be a subset of [-pi, pi], and this arm's is not.
+
+  The xArm 6's axis 3 runs to -3.926990 rad, so 45.0 deg of its declared travel sits below
+  -pi. Wrapping solutions to [-pi, pi] pushed anything in that band outside the limits,
+  where it was reported as a violation with a precisely computed overshoot for a violation
+  that did not exist. Worse, `reachable` then returned False with refusal None for a pose
+  the arm was physically holding: a wrong answer carrying no error signal, which is the one
+  outcome this module exists to prevent.
+  """
+
+  def test_a_pose_the_arm_is_physically_holding_is_reachable(self):
+    m = xarm6()
+    q = [1.846065, -1.424405, -3.887100, -0.347984, 3.059293, -5.378033]
+    self.assertTrue(m.limits.contains(q), "the fixture must be in limits to mean anything")
+    self.assertLess(q[2], -math.pi, "and axis 3 must sit in the band below -pi")
+    r = reachable(m, forward(m, q))
+    self.assertTrue(r.reachable())
+    self.assertGreater(r.valid_solutions, 0)
+
+  def test_every_pose_across_the_full_declared_range_has_a_valid_solution(self):
+    """The earlier round-trip sampled [-2.2, 2.2] and never entered the band, so it passed
+    while 100 percent of the band failed. Sample the declared range instead."""
+    m = xarm6()
+    lo, hi = m.limits.lower_rad, m.limits.upper_rad
+    rng = random.Random(3)
+    in_band = 0
+    for _ in range(60):
+      q = [rng.uniform(l, u) for l, u in zip(lo, hi)]
+      if lo[2] <= q[2] < -math.pi:
+        in_band += 1
+      target = forward(m, q)
+      valid = inverse(m, target, seeds=64).valid()
+      self.assertTrue(valid, f"no valid solution for an in-limit configuration {q}")
+      for s in valid:
+        got = forward(m, s.joints_rad).position_mm()
+        self.assertLess(math.dist(got, target.position_mm()), 1e-6)
+    self.assertGreater(in_band, 0, "the sample must actually exercise the band")
+
+  def test_the_canonical_turn_is_the_nearest_in_range_one_not_the_largest(self):
+    """On an axis running to +/-2pi, taking the largest in-range turn would shove every
+    solution a full turn toward the upper limit: a physically different posture that
+    happens to share a flange pose, and branch labels that read from the sign of the
+    angle would follow it."""
+    m = xarm6()
+    q = [0.4, -0.5, -1.0, 0.3, 0.6, 0.2]
+    valid = inverse(m, forward(m, q), seeds=64).valid()
+    recovered = [s for s in valid if max(abs(a - b) for a, b in zip(s.joints_rad, q)) < 1e-6]
+    self.assertTrue(recovered, "a principal-value configuration must come back unchanged")
+
+
+class ConditioningMeasuresTheJacobianTheCallerLeftFree(unittest.TestCase):
+  """A locked axis is a column the controller cannot use.
+
+  The smallest singular value of the full 6xN is bounded below by that of any 6x6
+  submatrix, so reporting the full matrix under a redundancy lock is always optimistic.
+  Measured overstatement here was 345x, which turned a true demand of 8.7 rad/s per mm/s
+  into a reported 0.025 with usable() returning True.
+  """
+
+  Q = [1.903133, 1.921923, -2.60931, 0.045594, 1.628655, 0.70345, -0.471163]
+
+  def test_locking_an_axis_changes_the_reported_conditioning(self):
+    m = xarm7()
+    free = [i for i in range(7) if i != 2]
+    full = min_singular_value(m, self.Q)
+    constrained = min_singular_value(m, self.Q, free=free)
+    self.assertLess(constrained, full)
+    self.assertGreater(full / constrained, 100.0, "this fixture exists because the gap is large")
+
+  def test_a_locked_configuration_the_arm_cannot_track_is_refused(self):
+    """Before the fix this returned usable solutions. The true joint rate demanded is
+    about 8.7 rad/s per mm/s, so 50 mm/s of tool motion needs 434 rad/s against a
+    published maximum of pi."""
+    m = xarm7()
+    with self.assertRaises(SingularityRefusal):
+      inverse(m, forward(m, self.Q), redundancy=RedundancyLock(axis=3, value_rad=self.Q[2]))

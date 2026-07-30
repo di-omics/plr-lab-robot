@@ -1169,6 +1169,7 @@ def min_singular_value(
   model: KinematicModel,
   joints_rad: Sequence[float],
   policy: SingularityPolicy = DEFAULT_SINGULARITY,
+  free: Optional[Sequence[int]] = None,
 ) -> float:
   """Smallest singular value of the length-scaled Jacobian, in mm per rad.
 
@@ -1179,6 +1180,16 @@ def min_singular_value(
   model.require_computable()
   model.require_dof(joints_rad)
   scaled = _scaled_jacobian(model, joints_rad, policy.characteristic_length_mm)
+  if free is not None:
+    # Measure the Jacobian the caller actually left free. A locked axis is a column the
+    # controller cannot use, and the smallest singular value of the full 6xN is bounded
+    # below by that of any 6x6 submatrix, so reporting the full matrix is always
+    # optimistic. Observed overstatement on a locked xArm 7: 349x, turning a true demand
+    # of 8.68 rad/s per mm/s -- which needs 434 rad/s against a published maximum of pi --
+    # into a comfortable 0.025 with usable() returning True. RedundancyLock's own
+    # docstring says locking an axis puts the algorithmic singularity wherever the task
+    # needs that axis; this is the measurement of that.
+    scaled = scaled[:, list(free)]
   return float(np.linalg.svd(scaled, compute_uv=False)[-1])
 
 
@@ -1259,6 +1270,45 @@ def _pose_error(
 
 def _wrap(a: np.ndarray) -> np.ndarray:
   return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+
+
+def _canonical_in_limits(q, limits: "JointLimits"):
+  """Pick the turn of each joint angle that lies inside its DECLARED range.
+
+  Wrapping to [-pi, pi] is the obvious canonical form and it is the wrong one here, because
+  a joint range is not required to be a subset of [-pi, pi]. The xArm 6's axis 3 runs to
+  -3.926990 rad, so 45.0 deg of its declared travel sits below -pi. A solution in that band
+  wrapped to [-pi, pi] lands outside the limits and gets reported as a violation, with a
+  precisely computed overshoot for a violation that does not exist -- and, worse,
+  `reachable` then returns False with no refusal for a pose the arm is physically holding.
+  A wrong answer carrying no error signal is the one outcome this module is built to
+  prevent, so the canonical form has to be defined against the limits rather than against
+  a convention.
+
+  Falls back to the [-pi, pi] wrap only when no turn lands in range, which is the genuinely
+  out-of-limits case and the one the violation report is actually for.
+  """
+  out = np.array(q, dtype=float)
+  for i, v in enumerate(out):
+    lo_i = limits.lower_rad[i]
+    hi_i = limits.upper_rad[i]
+    principal = float(_wrap(np.array([v]))[0])
+    if lo_i <= principal <= hi_i:
+      out[i] = principal
+      continue
+    # The principal value is out of range, so look for the nearest turn that is not.
+    # Nearest to the principal value rather than largest-in-range: on an axis running to
+    # +/-2pi, "largest in range" would shove every solution a full turn toward the upper
+    # limit, reporting a physically different posture that happens to share a flange pose
+    # and breaking the branch labels that depend on the sign of the angle.
+    best = None
+    for k in (-2, -1, 1, 2):
+      cand = principal + _TWO_PI * k
+      if lo_i <= cand <= hi_i and (best is None or abs(cand - principal) < abs(best - principal)):
+        best = cand
+    out[i] = principal if best is None else best
+  return out
 
 
 def _solve_from_seed(
@@ -1370,8 +1420,11 @@ def inverse(
     )
 
   rng = np.random.default_rng(seed)
-  lo = np.array([max(v, -math.pi) for v in model.limits.lower_rad])
-  hi = np.array([min(v, math.pi) for v in model.limits.upper_rad])
+  # Seed across the FULL declared range. Clamping to [-pi, pi] silently discarded 45.0 deg
+  # of axis 3's travel on the xArm 6, whose lower limit is -3.926990 rad, so no start point
+  # ever landed in the band and no amount of extra seeds could reach a solution there.
+  lo = np.array(model.limits.lower_rad, dtype=float)
+  hi = np.array(model.limits.upper_rad, dtype=float)
   length_mm = singularity.characteristic_length_mm
 
   found: List[np.ndarray] = []
@@ -1391,7 +1444,7 @@ def inverse(
     )
     if not ok:
       continue
-    canonical = _wrap(q)
+    canonical = _canonical_in_limits(q, model.limits)
     if redundancy is not None:
       canonical[redundancy.axis - 1] = q[redundancy.axis - 1]
     if any(float(np.abs(_wrap(canonical - f)).max()) < duplicate_tolerance_rad for f in found):
@@ -1416,7 +1469,7 @@ def inverse(
         limits=model.limits,
         position_residual_mm=float(np.linalg.norm(residual[:3])),
         orientation_residual_rad=float(np.linalg.norm(residual[3:])) / length_mm,
-        min_singular_value=min_singular_value(model, q, singularity),
+        min_singular_value=min_singular_value(model, q, singularity, free=free),
       )
     )
   solutions.sort(key=lambda s: (not s.within_limits(), -s.min_singular_value))
