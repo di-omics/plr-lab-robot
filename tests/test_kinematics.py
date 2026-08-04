@@ -675,7 +675,7 @@ class CanonicalFormRespectsDeclaredLimits(unittest.TestCase):
     rng = random.Random(3)
     in_band = 0
     for _ in range(60):
-      q = [rng.uniform(l, u) for l, u in zip(lo, hi)]
+      q = [rng.uniform(lower, upper) for lower, upper in zip(lo, hi)]
       if lo[2] <= q[2] < -math.pi:
         in_band += 1
       target = forward(m, q)

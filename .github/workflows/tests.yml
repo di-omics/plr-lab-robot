@@ -1,0 +1,221 @@
+name: tests
+
+# Runs on every branch, not just main. A push filter of [main] plus
+# pull_request looks like full coverage and is not: a branch whose pull
+# request targets another branch can be reviewed, approved and merged without
+# this workflow ever having run on it. Verified the hard way -- the first push
+# of this branch ran house-rules alone, and the test job was silent rather
+# than failing, which is the harder failure to notice.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and a current release. 3.9 is the declared floor in
+        # pyproject, and it is the one that catches "X | Y" annotations and
+        # builtin generics, which run fine on 3.12 and fail on the floor.
+        python-version: ["3.9", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # No extras. The simulation path, the vision math, and the whole learning
+      # phase are meant to run on CPU with nothing but pylabrobot and numpy, and
+      # a job that quietly installed torch would stop proving that.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # The line above is the claim; this is the check. An extra can arrive as a
+      # transitive dependency of something innocent, and then the CPU-only
+      # invariant is false while every job stays green.
+      - name: Assert the heavy extras stayed out
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import sys
+
+          forbidden = ["torch", "tensorflow", "jax", "cv2"]
+          present = [name for name in forbidden if importlib.util.find_spec(name) is not None]
+          if present:
+            sys.stderr.write("CPU-only invariant broken, these are importable: %s\n" % present)
+            raise SystemExit(1)
+          print("no heavy extras importable")
+          PY
+
+      # The rule set is passed on the command line rather than left to ruff's
+      # defaults, and it mirrors pyproject. Leaving it to the defaults means a
+      # new ruff release silently changes what this job enforces without anyone
+      # editing the repo, and the change arrives as an unrelated red build.
+      - name: Lint
+        run: ruff check --select E4,E7,E9,F --line-length 100 plr_lr tests examples scripts
+
+      - name: Test
+        run: pytest -q
+
+      # Every example is meant to run start to finish with no hardware and no
+      # weights. If one stops doing that, the claim on the front page is stale.
+      - name: Examples run
+        run: |
+          for f in examples/*.py; do
+            echo "run $f"
+            python "$f" > /dev/null
+          done
+
+  # The scoring core has to be readable and runnable by a reviewer who will not
+  # install anything, which is most reviewers. This job is the proof, and the
+  # proof is only worth something if it is mechanical: a stock python:3.9-slim
+  # image, the repository mounted read-only-in-practice, no network, and no
+  # install line of any kind. Adding a pip install here does not fix a failure,
+  # it deletes the claim.
+  standalone-scorer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # "Nothing was checked" and "the check passed" are different answers. If
+      # the script is missing, this job fails loudly rather than skipping, so a
+      # deleted or renamed scorer cannot pass as a green dependency-free proof.
+      - name: Assert the standalone scorer is present
+        run: test -f scripts/score_standalone.py
+
+      # The scorer needs a result file. This job used to pass it neither a path
+      # nor a stdin, and "docker run" without "-i" hands the container an empty
+      # stdin, so main() read "" and returned 2 on every push. A job that cannot
+      # go green proves nothing at all, and this one is the only mechanical proof
+      # that the scoring core runs with zero installs, so it gets a real file.
+      #
+      # Generated here rather than committed, and the reason is not laziness: the
+      # fixture has to carry 200 ranked episodes to reach the RANKABLE tier and an
+      # unknowable fraction inside [0.05, 0.40] to get the abstention block, and a
+      # 240-episode JSON blob checked into the tree is a file nobody reads and
+      # everybody trusts. Twenty lines of arithmetic can be checked by eye. This
+      # step uses the runner's own python3 and nothing but stdlib json; it is not
+      # an install, and it is not the thing the claim below is about.
+      - name: Build a result file to score
+        run: |
+          mkdir -p ci-fixture
+          python3 - ci-fixture/results.json <<'PY'
+          import json
+          import sys
+
+          # Every seventh episode is unknowable and is abstained on, which puts
+          # the abstention fraction at 35/240 = 0.146, inside the band. Confidence
+          # walks [0, 1] on a stride coprime with the count and the hit rule
+          # follows it, so the ranking is informative rather than noise; every
+          # thirteenth episode disagrees with the rule, so it is not perfectly
+          # separated either, and the curve has something to measure.
+          episodes = []
+          for i in range(240):
+            episode_id = "E%03d" % i
+            if i % 7 == 0:
+              episodes.append({"episode_id": episode_id, "hit": False, "confidence": None,
+                               "abstain": True, "unknowable": True})
+              continue
+            confidence = ((i * 37) % 101) / 100.0
+            hit = confidence >= 0.45
+            if i % 13 == 0:
+              hit = not hit
+            episodes.append({"episode_id": episode_id, "hit": hit, "confidence": confidence,
+                             "abstain": False, "unknowable": False})
+          payload = {
+            "task_id": "S2",
+            "horizon": 2,
+            "seed": 0,
+            "threshold": {"value": 0.6, "calibrated_on": "CI fixture, dev seeds 0-99",
+                          "n_calibration": 100},
+            "episodes": episodes,
+          }
+          with open(sys.argv[1], "w") as handle:
+            json.dump(payload, handle, indent=1, sort_keys=True)
+          print("fixture: %d episodes, %d abstentions"
+                % (len(episodes), sum(1 for e in episodes if e["abstain"])))
+          PY
+          test -s ci-fixture/results.json
+
+      # --network none is part of the claim, not decoration: a scoring core that
+      # reached out for anything would be neither standalone nor reproducible.
+      - name: Run it on python:3.9-slim with zero installs
+        run: |
+          set -o pipefail
+          docker run --rm --network none \
+            -v "$PWD:/repo" -w /repo \
+            python:3.9-slim python scripts/score_standalone.py ci-fixture/results.json \
+            | tee ci-fixture/card.txt
+
+      # Exit 0 is not evidence that anything was scored: the help screen exits 0
+      # too, and so does a scorer that has been reduced to a print statement.
+      # These four lines exist only if the episodes were read, ranked and tiered.
+      - name: Assert it actually scored the file
+        run: |
+          grep -q "DeferLab selective scorecard -- task S2 horizon 2" ci-fixture/card.txt
+          grep -q "240 scored, 205 ranked, 35 abstained" ci-fixture/card.txt
+          grep -q "\[RANKABLE\]" ci-fixture/card.txt
+          grep -q "^  rankable: True$" ci-fixture/card.txt
+
+      # The machine-readable mode, checked structurally. A card that prints and a
+      # --json that does not parse is the failure a submitter hits first and that
+      # a human reading CI logs never sees.
+      - name: Assert the JSON mode parses and agrees
+        run: |
+          docker run --rm --network none \
+            -v "$PWD:/repo" -w /repo \
+            python:3.9-slim python scripts/score_standalone.py ci-fixture/results.json --json \
+            > ci-fixture/card.json
+          python3 - ci-fixture/card.json <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1]) as handle:
+            report = json.load(handle)
+          expected = {"task_id": "S2", "horizon": 2, "seed": 0, "n": 240, "n_ranked": 205,
+                      "n_abstained": 35, "tier": "RANKABLE", "rankable": True, "valid": True}
+          wrong = {k: (report.get(k), v) for k, v in expected.items() if report.get(k) != v}
+          if wrong:
+            sys.stderr.write("standalone --json disagrees, {field: (got, want)}: %r\n" % wrong)
+            raise SystemExit(1)
+          print("standalone --json agrees on %d fields" % len(expected))
+          PY
+
+      # The refusal path, from the same image and with no installs either. A
+      # scorer that accepts a result carrying no frozen threshold has stopped
+      # being the thing this repository claims, and it would still exit 0 above.
+      - name: Assert it still refuses a result with no frozen threshold
+        run: |
+          python3 - ci-fixture/results.json ci-fixture/no-threshold.json <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1]) as handle:
+            payload = json.load(handle)
+          del payload["threshold"]
+          with open(sys.argv[2], "w") as handle:
+            json.dump(payload, handle)
+          PY
+          if docker run --rm --network none \
+              -v "$PWD:/repo" -w /repo \
+              python:3.9-slim python scripts/score_standalone.py ci-fixture/no-threshold.json \
+              2> ci-fixture/refusal.txt; then
+            echo "the scorer accepted a result file with no frozen threshold" >&2
+            exit 1
+          fi
+          grep -q "REFUSED" ci-fixture/refusal.txt
+          grep -q "threshold" ci-fixture/refusal.txt
+          ! grep -q "Traceback" ci-fixture/refusal.txt
