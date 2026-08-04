@@ -1,8 +1,14 @@
 name: tests
 
+# Runs on every branch, not just main. A push filter of [main] plus
+# pull_request looks like full coverage and is not: a branch whose pull
+# request targets another branch can be reviewed, approved and merged without
+# this workflow ever having run on it. Verified the hard way -- the first push
+# of this branch ran house-rules alone, and the test job was silent rather
+# than failing, which is the harder failure to notice.
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
