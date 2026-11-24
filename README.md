@@ -11,7 +11,7 @@ without a physical robot. `plr-lr` closes that gap and builds two layers on top,
 in three phases:
 
 ```
-  arm  ─▶  vision  ─▶  manipulation
+  arm  -->  vision  -->  manipulation
 ```
 
 1. **arm** - a simulation backend for `ExperimentalSCARA`: joint and Cartesian
@@ -25,8 +25,11 @@ in three phases:
    execute, verify.
 
 Everything runs simulation-first and CPU-only, and is validated by planting known
-ground truth and scoring recovery. Swap the simulation backend for a hardware
-backend and the same scripts drive a real arm.
+ground truth and scoring recovery. The vision and manipulation
+layers use only the PyLabRobot `ExperimentalSCARA` API, so a hardware backend can
+replace the simulation backend; the code and tests here run in simulation.
+
+Design notes and the limits of the simulation are in [docs/phases.md](docs/phases.md).
 
 ## Install
 
@@ -34,9 +37,9 @@ backend and the same scripts drive a real arm.
 pip install -e .
 ```
 
-Runtime dependencies are `pylabrobot` and `numpy`. Real SOTA detectors
-(RF-DETR, SAM2) are an optional `vision` extra; the simulation path needs
-neither weights nor a GPU.
+Runtime dependencies are `pylabrobot` and `numpy`. RF-DETR and SAM2 have
+adapter stubs in `plr_lr/vision/detector.py` that raise `NotImplementedError`
+for now; the simulation path needs neither weights nor a GPU.
 
 ## Quickstart
 

@@ -20,7 +20,7 @@ keywords = [
   "robotics",
 ]
 dependencies = [
-  "pylabrobot>=0.2",
+  "pylabrobot>=0.2,<1.0",
   "numpy>=1.23",
 ]
 

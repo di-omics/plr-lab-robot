@@ -1,7 +1,8 @@
 """Phase 1: stand up the arm and move a plate between two deck sites.
 
-Runs entirely in simulation (no hardware). Swap SimulationArmBackend for a
-PreciseFlexBackend and the same script drives a real arm.
+Runs entirely in simulation (no hardware). The readiness report and the last 2
+prints read `is_set_up`, `homed`, `holding` and `trace`, which only
+SimulationArmBackend provides.
 
     python examples/01_stand_up_arm.py
 """
